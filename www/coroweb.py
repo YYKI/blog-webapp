@@ -1,8 +1,15 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+__author__ = 'syuson'
+
 import asyncio, os, inspect, logging, functools
 
 from urllib import parse
 
 from aiohttp import web
+
+from apis import APIError
 
 
 def get(path):
@@ -82,7 +89,7 @@ def has_request_arg(fn):
             found = True
             continue
         if found and (
-                            param.kind != inspect.Parameter.VAR_POSITIONAL and param.kind != inspect.Parameter.KEYWORD_ONLY and param.kind != inspect.Parameter.VAR_KEYWORD):
+                    param.kind != inspect.Parameter.VAR_POSITIONAL and param.kind != inspect.Parameter.KEYWORD_ONLY and param.kind != inspect.Parameter.VAR_KEYWORD):
             raise ValueError(
                 'request parameter must be the last named parameter in function:%s%s' % (fn.__name__, str(sig)))
     return found
@@ -149,8 +156,11 @@ class RequestHandler(object):
                 if not name in kw:
                     return web.HTTPBadRequest(text='Missing argument : %s' % name)
         logging.info('call with args:%s' % str(kw))
-        r = await self._func(**kw)
-        return r
+        try:
+            r = await self._func(**kw)
+            return r
+        except APIError as e:
+            raise dict(error=e.error, data=e.data, message=e.message)
 
 
 # 添加静态文件夹的路径
@@ -172,20 +182,21 @@ def add_route(app, fn):
         'add route %s %s => %s(%s)' % (method, path, fn.__name__, ','.join(inspect.signature(fn).parameters.keys())))
     app.router.add_route(method, path, RequestHandler(app, fn))
 
+
 # 批量注册URL函数
-# def add_routes(app,module_name):
-# 	n = module_name.rfind('.')
-# 	if n == (-1):
-# 		mod =  __import__(module_name,globals(),locals())
-# 	else:
-# 		name = module_name[n+1:]
-# 		mod = getattr(__import__(module_name[:n],globals(),locals(),[name]),name)
-# 	for attr in dir(mod):
-# 		if attr.startswith('_'):
-# 			continue
-# 		fn = getattr(mod,attr)
-# 		if callable(fn):
-# 			method = getattr(fn,'__method__',None)
-# 			path = getattr(fn,'__route__',None)
-#             add_route(app, fn)
-# if  not method and path:
+def add_routes(app, module_name):
+    n = module_name.rfind('.')
+    if n == (-1):
+        mod = __import__(module_name, globals(), locals())
+    else:
+        name = module_name[n + 1:]
+        mod = getattr(__import__(module_name[:n], globals(), locals(), [name]), name)
+    for attr in dir(mod):
+        if attr.startswith('_'):
+            continue
+        fn = getattr(mod, attr)
+        if callable(fn):
+            method = getattr(fn, '__method__', None)
+            path = getattr(fn, '__route__', None)
+            if method and path:
+                add_route(app, fn)
